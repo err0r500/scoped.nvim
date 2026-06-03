@@ -33,7 +33,7 @@ interactively by toggling nodes in the tree.
 
 ```lua
 {
-  "<your-username>/scoped.nvim",
+  "err0r500/scoped.nvim",
   dependencies = { "nvim-tree/nvim-tree.lua" }, -- + telescope.nvim if you want :ScopedFind/:ScopedGrep
   opts = {
     default_keymaps = true, -- optional: bind <leader>s and <C-\> in the tree
@@ -45,7 +45,7 @@ interactively by toggling nodes in the tree.
 
 ```lua
 use({
-  "<your-username>/scoped.nvim",
+  "err0r500/scoped.nvim",
   requires = { "nvim-tree/nvim-tree.lua" },
   config = function()
     require("scoped").setup({ default_keymaps = true })
