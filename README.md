@@ -10,10 +10,10 @@ Maintain a per-project list of "allowed" folders. When a scope is active:
 - the nvim-tree explorer hides everything outside the allowed folders (ancestor
   folders on the path to an allowed folder stay visible so you can navigate to
   them);
-- `:ScopedFind` / `:ScopedGrep` run Telescope `find_files` / `live_grep`
+- `:Scoped find` / `:Scoped grep` run Telescope `find_files` / `live_grep`
   restricted to those folders.
 
-The list is editable as a plain buffer (`:ScopedEdit`), or built up
+The list is editable as a plain buffer (`:Scoped edit`), or built up
 interactively by toggling nodes in the tree.
 
 ## Requirements
@@ -21,7 +21,7 @@ interactively by toggling nodes in the tree.
 - Neovim 0.9+
 - [nvim-tree.lua](https://github.com/nvim-tree/nvim-tree.lua) (required)
 - [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) (optional —
-  enables `:ScopedFind` / `:ScopedGrep`)
+  enables `:Scoped find` / `:Scoped grep`)
 
 > **Note:** the nvim-tree filter is implemented against nvim-tree's explorer
 > internals (`nvim-tree.core`, `explorer.filters`). It is tested against current
@@ -34,7 +34,7 @@ interactively by toggling nodes in the tree.
 ```lua
 {
   "err0r500/scoped.nvim",
-  dependencies = { "nvim-tree/nvim-tree.lua" }, -- + telescope.nvim if you want :ScopedFind/:ScopedGrep
+  dependencies = { "nvim-tree/nvim-tree.lua" }, -- + telescope.nvim if you want :Scoped find/:Scoped grep
   opts = {
     default_keymaps = true, -- optional: bind <leader>s and <C-\> in the tree
   },
@@ -53,19 +53,23 @@ use({
 })
 ```
 
-`setup()` is optional. The commands below are registered at startup either way;
-`setup()` only matters if you want the bundled `default_keymaps`.
+`setup()` is optional. The `:Scoped` command below is registered at startup
+either way; `setup()` only matters if you want the bundled `default_keymaps`.
 
 ## Commands
 
-| Command        | Description                                              |
-| -------------- | -------------------------------------------------------- |
-| `:ScopedEdit`  | Open the editable scope-list buffer (one path per line)  |
-| `:ScopedAdd`   | Add a path (defaults to the current file) to the list    |
-| `:ScopedApply` | Apply the current list (filter tree + register commands) |
-| `:ScopedClear` | Remove the scope (only exists while a scope is active)   |
-| `:ScopedFind`  | Telescope `find_files` scoped to allowed folders         |
-| `:ScopedGrep`  | Telescope `live_grep` scoped to allowed folders          |
+Everything lives under a single `:Scoped` command with tab-completable
+subcommands:
+
+| Command          | Description                                             |
+| ---------------- | ------------------------------------------------------ |
+| `:Scoped edit`   | Open the editable scope-list buffer (one path per line)|
+| `:Scoped add`    | Add a path (defaults to the current file) to the list  |
+| `:Scoped remove` | Remove a path (defaults to the current file)           |
+| `:Scoped apply`  | Apply the current list (filter tree + scoped search)   |
+| `:Scoped clear`  | Remove the active scope                                |
+| `:Scoped find`   | Telescope `find_files` scoped to allowed folders       |
+| `:Scoped grep`   | Telescope `live_grep` scoped to allowed folders        |
 
 ## Usage
 
@@ -79,11 +83,11 @@ require("scoped").apply({ "lua/config", "after" })
 
 ### Build a scope interactively
 
-1. `:ScopedEdit` to open the list buffer, type folder paths (cwd-relative, one
+1. `:Scoped edit` to open the list buffer, type folder paths (cwd-relative, one
    per line), and `:w` to commit.
 2. Or, with `default_keymaps`, hover a node in nvim-tree and press `<C-\>` to
    toggle it in the list.
-3. `:ScopedApply` (or `<leader>s`) to apply.
+3. `:Scoped apply` (or `<leader>s`) to apply.
 
 ### Toggle on/off
 

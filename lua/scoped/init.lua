@@ -2,7 +2,7 @@
 --
 -- Per-project config declares only the `allowed` list and calls:
 --   require("scoped").apply({ "lua/config", "after" })
--- Revert with require("scoped").revert() or the :ScopedClear command.
+-- Revert with require("scoped").revert() or the :Scoped clear command.
 --
 -- The module is require()-able from any project regardless of cwd as long as
 -- it is on the runtimepath.
@@ -249,20 +249,6 @@ function M.apply(allowed)
   explorer.filters.enabled = true
   api.tree.reload()
 
-  if has_telescope() then
-    vim.api.nvim_create_user_command("ScopedFind", function()
-      require("telescope.builtin").find_files({ search_dirs = scoped_dirs(allowed) })
-    end, { desc = "Find files in scoped folders", force = true })
-
-    vim.api.nvim_create_user_command("ScopedGrep", function()
-      require("telescope.builtin").live_grep({ search_dirs = scoped_dirs(allowed) })
-    end, { desc = "Live grep in scoped folders", force = true })
-  end
-
-  vim.api.nvim_create_user_command("ScopedClear", function()
-    M.revert()
-  end, { desc = "Remove the scope (tree filter + scoped commands)", force = true })
-
   M._active = true
   vim.notify("scoped applied: " .. table.concat(allowed, ", "))
 end
@@ -275,8 +261,6 @@ function M.revert()
     explorer.filters.custom_function = nil
     require("nvim-tree.api").tree.reload()
   end
-  pcall(vim.api.nvim_del_user_command, "ScopedFind")
-  pcall(vim.api.nvim_del_user_command, "ScopedGrep")
   M._active = false
   vim.notify("scoped reverted")
 end
@@ -290,19 +274,104 @@ function M.toggle_scope()
   end
 end
 
--- Register the always-available commands (work before any apply). Idempotent.
+-- Subcommands dispatched by the single :Scoped command. Each entry has a `run`
+-- handler (receives the remaining args as a list) and an optional `complete`
+-- mode for completing its arguments. Keep the table sorted for tidy completion.
+local subcommands = {
+  add = {
+    run = function(args)
+      M.add(args[1] and args[1] ~= "" and args[1] or vim.fn.expand("%"))
+    end,
+    complete = "file",
+  },
+  apply = {
+    run = function() M.apply_current() end,
+  },
+  clear = {
+    run = function() M.revert() end,
+  },
+  edit = {
+    run = function() M.open_buffer() end,
+  },
+  find = {
+    run = function()
+      if not has_telescope() then
+        vim.notify("scoped: telescope is not available", vim.log.levels.WARN)
+        return
+      end
+      if #M._list == 0 then
+        vim.notify("scoped: list is empty, nothing to search", vim.log.levels.WARN)
+        return
+      end
+      require("telescope.builtin").find_files({ search_dirs = scoped_dirs(M._list) })
+    end,
+  },
+  grep = {
+    run = function()
+      if not has_telescope() then
+        vim.notify("scoped: telescope is not available", vim.log.levels.WARN)
+        return
+      end
+      if #M._list == 0 then
+        vim.notify("scoped: list is empty, nothing to search", vim.log.levels.WARN)
+        return
+      end
+      require("telescope.builtin").live_grep({ search_dirs = scoped_dirs(M._list) })
+    end,
+  },
+  remove = {
+    run = function(args)
+      M.remove(args[1] and args[1] ~= "" and args[1] or vim.fn.expand("%"))
+    end,
+    complete = "file",
+  },
+}
+
+-- Sorted subcommand names, for completion and error messages.
+local function subcommand_names()
+  local names = vim.tbl_keys(subcommands)
+  table.sort(names)
+  return names
+end
+
+-- Register the single always-available :Scoped command (works before any
+-- apply). Idempotent.
 local function register_commands()
-  vim.api.nvim_create_user_command("ScopedApply", function()
-    M.apply_current()
-  end, { desc = "Apply the current scoped list", force = true })
-
-  vim.api.nvim_create_user_command("ScopedEdit", function()
-    M.open_buffer()
-  end, { desc = "Open the editable scoped list buffer", force = true })
-
-  vim.api.nvim_create_user_command("ScopedAdd", function(o)
-    M.add(o.args ~= "" and o.args or vim.fn.expand("%"))
-  end, { nargs = "?", complete = "file", desc = "Add a path to the scoped list", force = true })
+  vim.api.nvim_create_user_command("Scoped", function(o)
+    local args = vim.deepcopy(o.fargs)
+    local name = table.remove(args, 1)
+    local sub = name and subcommands[name]
+    if not sub then
+      vim.notify(
+        "scoped: unknown subcommand '" .. (name or "") .. "'\navailable: " ..
+          table.concat(subcommand_names(), ", "),
+        vim.log.levels.ERROR
+      )
+      return
+    end
+    sub.run(args)
+  end, {
+    nargs = "*",
+    desc = "scoped.nvim: add/remove/apply/clear/edit/find/grep",
+    complete = function(arglead, cmdline)
+      -- Tokens so far (drop the leading "Scoped"); a trailing space yields an
+      -- empty final token, which means "completing a fresh argument".
+      local tokens = vim.split(vim.trim(cmdline), "%s+")
+      table.remove(tokens, 1)
+      local completing_subcommand = #tokens == 0
+        or (#tokens == 1 and not cmdline:match("%s$"))
+      if completing_subcommand then
+        return vim.tbl_filter(function(n)
+          return n:sub(1, #arglead) == arglead
+        end, subcommand_names())
+      end
+      local sub = subcommands[tokens[1]]
+      if sub and sub.complete == "file" then
+        return vim.fn.getcompletion(arglead, "file")
+      end
+      return {}
+    end,
+  })
 end
 
 -- Optional convenience keymaps, off by default. Mirrors a sensible setup; users
@@ -332,9 +401,9 @@ function M.setup(opts)
   return M
 end
 
--- Register commands eagerly too, so `require("scoped")` without setup() still
--- exposes :ScopedApply / :ScopedEdit / :ScopedAdd (matches the original
--- side-effect-on-require behaviour).
+-- Register the command eagerly too, so `require("scoped")` without setup()
+-- still exposes :Scoped (matches the original side-effect-on-require
+-- behaviour).
 register_commands()
 
 return M
