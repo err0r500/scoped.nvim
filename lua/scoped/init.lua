@@ -100,6 +100,23 @@ function M._render()
   vim.bo[M._bufnr].modified = false
 end
 
+-- If a scope is active, rebuild the tree filter from the current list and
+-- reload, so list edits take effect without a manual re-apply. No-op when no
+-- scope is applied. If the list is now empty there is nothing to scope to, so
+-- revert instead of hiding the whole tree.
+function M._refresh()
+  if not M._active then return end
+  if #M._list == 0 then
+    M.revert()
+    return
+  end
+  local ok_core, core = pcall(require, "nvim-tree.core")
+  local explorer = ok_core and core.get_explorer()
+  if not explorer then return end
+  explorer.filters.custom_function = build_filter(M._list)
+  require("nvim-tree.api").tree.reload()
+end
+
 function M.add(path)
   local rel = normalize(path)
   if not rel or index_of(rel) then return false end
@@ -115,6 +132,7 @@ function M.remove(path)
   if not i then return false end
   table.remove(M._list, i)
   M._render()
+  M._refresh() -- auto-update the live tree when removing from an active scope
   return true
 end
 
