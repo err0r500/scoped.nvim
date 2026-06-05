@@ -18,6 +18,10 @@ local BUF_NAME = "scoped://list"
 -- works with zero configuration.
 M.options = {
   default_keymaps = false, -- set true to bind <leader>s / :ScopedEdit helpers
+  markers = false, -- set true to mark scoped folders inside the nvim-tree
+  marker_icon = "●", -- glyph shown next to a scoped folder ("" to omit the icon)
+  marker_placement = "right_align", -- "before" | "after" | "right_align"
+  marker_highlight = true, -- also tint the scoped folder name (ScopedMarkerName)
 }
 
 -- abs-or-relative -> cwd-relative, forward-slash, no trailing slash; relative to
@@ -65,8 +69,11 @@ local function build_filter(allowed)
     return false
   end
 
+  -- Hoist cwd out of the per-node closure: the filter is rebuilt on every
+  -- apply/refresh, so cwd is fresh, and we avoid a syscall per node.
+  local cwd = vim.uv.cwd()
   return function(absolute_path)
-    local rel = path_relative(absolute_path, vim.uv.cwd())
+    local rel = path_relative(absolute_path, cwd)
     return not keep(rel)
   end
 end
@@ -100,6 +107,86 @@ function M._render()
   vim.bo[M._bufnr].modified = false
 end
 
+-- Absolute paths of the current scope roots, keyed for O(1) lookup. Built once
+-- per render (see the decorator constructor) so the per-node check is a single
+-- table lookup instead of an fnamemodify + cwd + list scan on every node — the
+-- difference between snappy and sluggish on large trees. List entries are
+-- cwd-relative and inside cwd (normalize() guarantees it), so cwd .. "/" .. rel
+-- reconstructs exactly the node.absolute_path nvim-tree builds.
+local function scoped_abs_set()
+  local cwd = vim.uv.cwd()
+  local set = {}
+  for _, rel in ipairs(M._list) do
+    set[cwd .. "/" .. rel] = true
+  end
+  return set
+end
+
+-- The scoped nvim-tree decorator class, built lazily once nvim-tree is loaded.
+-- false once we've determined nvim-tree's Decorator API is unavailable; nil
+-- until first checked. The class reads M.options / M._list live on each render.
+local ScopedDecorator = nil
+local function ensure_decorator()
+  if ScopedDecorator ~= nil then return ScopedDecorator end
+  local ok, api = pcall(require, "nvim-tree.api")
+  if not ok or not api.Decorator then
+    ScopedDecorator = false
+    return false
+  end
+  -- Mirrors nvim-tree's builtin decorators: a separate highlight for the glyph
+  -- (ScopedMarkerIcon, set in the icon's hl) and for the node name
+  -- (ScopedMarkerName, applied when highlight_range is "name").
+  local D = api.Decorator:extend()
+  function D:new()
+    self.enabled = true
+    self.highlight_range = M.options.marker_highlight and "name" or "none"
+    self.icon_placement = M.options.marker_icon ~= "" and M.options.marker_placement or "none"
+    self._scoped = scoped_abs_set() -- snapshot the scope once, reused for every node
+  end
+  function D:icons(node)
+    if M.options.marker_icon ~= "" and node and self._scoped[node.absolute_path] then
+      return { { str = M.options.marker_icon, hl = { "ScopedMarkerIcon" } } }
+    end
+  end
+  function D:highlight_group(node)
+    if node and self._scoped[node.absolute_path] then return "ScopedMarkerName" end
+  end
+  ScopedDecorator = D
+  return D
+end
+
+-- nvim-tree's shared, live decorator list (config.g.renderer.decorators), read
+-- by the renderer on every build. Returns nil if nvim-tree is not configured.
+local function decorators_list()
+  local ok, cfg = pcall(require, "nvim-tree.config")
+  if not ok or type(cfg.g) ~= "table" or type(cfg.g.renderer) ~= "table" then
+    return nil
+  end
+  cfg.g.renderer.decorators = cfg.g.renderer.decorators or {}
+  return cfg.g.renderer.decorators
+end
+
+-- Append the scoped decorator to nvim-tree's decorator list if absent. Returns
+-- true only when it was actually inserted (so callers can reload just once).
+function M._enable_markers()
+  local D = ensure_decorator()
+  local list = D and decorators_list()
+  if not D or not list then return false end
+  for _, d in ipairs(list) do
+    if d == D then return false end
+  end
+  table.insert(list, D) -- additive: drawn over the builtin decorators
+  return true
+end
+
+-- Re-render the tree so marker changes show. No-op unless markers are enabled
+-- (apply/revert already reload, so this covers list edits while displayed).
+function M._refresh_markers()
+  if not M.options.markers then return end
+  local ok, api = pcall(require, "nvim-tree.api")
+  if ok then pcall(api.tree.reload) end
+end
+
 -- If a scope is active, rebuild the tree filter from the current list and
 -- reload, so list edits take effect without a manual re-apply. No-op when no
 -- scope is applied. If the list is now empty there is nothing to scope to, so
@@ -122,6 +209,7 @@ function M.add(path)
   if not rel or index_of(rel) then return false end
   table.insert(M._list, rel)
   M._render()
+  M._refresh_markers()
   return true
 end
 
@@ -133,6 +221,7 @@ function M.remove(path)
   table.remove(M._list, i)
   M._render()
   M._refresh() -- auto-update the live tree when removing from an active scope
+  M._refresh_markers()
   return true
 end
 
@@ -174,6 +263,7 @@ local function create_buffer()
       end
       M._list = new
       vim.bo[buf].modified = false
+      M._refresh_markers()
       vim.notify("scoped: list saved (" .. #new .. " paths)")
     end,
   })
@@ -391,12 +481,43 @@ local function setup_default_keymaps()
   })
 end
 
+-- Default marker highlights, following nvim-tree's Icon/Name split convention.
+-- Linked to base groups so they track the colorscheme; `default = true` means a
+-- user-defined group of the same name wins, so both are fully overridable
+-- (e.g. link them to an NvimTree* group if you prefer).
+local function define_marker_highlights()
+  vim.api.nvim_set_hl(0, "ScopedMarkerIcon", { link = "Special", default = true })
+  vim.api.nvim_set_hl(0, "ScopedMarkerName", { link = "Special", default = true })
+end
+
+-- Wire up the in-tree markers: define the highlight, register the decorator with
+-- nvim-tree, and re-register whenever a tree opens (handles scoped.setup running
+-- before nvim-tree.setup, or the tree opening later). Only the run that actually
+-- inserts the decorator triggers a reload.
+local function setup_markers()
+  define_marker_highlights()
+  vim.api.nvim_create_autocmd("ColorScheme", { callback = define_marker_highlights })
+  vim.api.nvim_create_autocmd("FileType", {
+    pattern = "NvimTree",
+    callback = function()
+      if M._enable_markers() then
+        local ok, api = pcall(require, "nvim-tree.api")
+        if ok then pcall(api.tree.reload) end
+      end
+    end,
+  })
+  M._enable_markers() -- best-effort immediate, if nvim-tree is already configured
+end
+
 -- Entry point for plugin managers. Safe to call zero or one time.
 function M.setup(opts)
   M.options = vim.tbl_deep_extend("force", M.options, opts or {})
   register_commands()
   if M.options.default_keymaps then
     setup_default_keymaps()
+  end
+  if M.options.markers then
+    setup_markers()
   end
   return M
 end

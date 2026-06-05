@@ -37,6 +37,7 @@ interactively by toggling nodes in the tree.
   dependencies = { "nvim-tree/nvim-tree.lua" }, -- + telescope.nvim if you want :Scoped find/:Scoped grep
   opts = {
     default_keymaps = true, -- optional: bind <leader>s and <C-\> in the tree
+    markers = true,         -- optional: mark scoped folders in the nvim-tree
   },
 }
 ```
@@ -94,6 +95,39 @@ require("scoped").apply({ "lua/config", "after" })
 `require("scoped").toggle_scope()` (bound to `<leader>s` under
 `default_keymaps`) applies the current list if no scope is active, or clears the
 active scope otherwise.
+
+### Scope markers in the tree
+
+With `markers = true`, each folder in your scope list is marked inside the
+nvim-tree with a glyph (and, optionally, a tinted name) — so you can see at a
+glance which folders are scoped, whether or not a scope is currently applied. It
+is implemented as an nvim-tree decorator that scoped.nvim registers for you; you
+do **not** need to touch nvim-tree's `renderer.decorators`. Off by default.
+
+| Option             | Default    | Meaning                                         |
+| ------------------ | ---------- | ----------------------------------------------- |
+| `marker_icon`      | `"●"`      | glyph shown next to a scoped folder (`""` omits it) |
+| `marker_placement` | `"after"`  | `"before"` / `"after"` / `"right_align"`        |
+| `marker_highlight` | `false`    | also tint the scoped folder name                |
+
+Two overridable highlight groups follow nvim-tree's own icon/name convention,
+linked to `Special` by default so they track your colorscheme:
+
+| Group              | Applies to                | Active when            |
+| ------------------ | ------------------------- | ---------------------- |
+| `ScopedMarkerIcon` | the marker glyph          | `marker_icon ~= ""`    |
+| `ScopedMarkerName` | the scoped folder name    | `marker_highlight`     |
+
+Override or relink either, e.g.:
+
+```lua
+vim.api.nvim_set_hl(0, "ScopedMarkerIcon", { fg = "#7aa2f7", bold = true })
+vim.api.nvim_set_hl(0, "ScopedMarkerName", { link = "NvimTreeBookmarkHL" })
+```
+
+> **Note:** like the tree filter, this uses nvim-tree's decorator API
+> (`nvim-tree.api.Decorator`, `renderer.decorators`); a major nvim-tree refactor
+> may require an update here.
 
 ## Default keymaps
 
